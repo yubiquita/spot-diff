@@ -1,0 +1,16 @@
+[project]
+name = "spot-diff"
+version = "0.1.0"
+description = "間違い探しを画像処理で解く"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.4",
+    "opencv-python-headless>=5.0.0.93",
+]
+
+[project.scripts]
+spot-diff = "spot_diff.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

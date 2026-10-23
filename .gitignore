@@ -1,0 +1,3 @@
+.venv/
+puzzles/*/work/
+__pycache__/
