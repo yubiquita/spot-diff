@@ -5,6 +5,7 @@ import json
 
 import cv2
 
+from .candidates import overlay
 from .puzzle import DOCS, Puzzle
 
 STYLE = """
@@ -17,7 +18,7 @@ table{border-collapse:collapse;width:100%;background:#fff} td,th{border-bottom:1
 figcaption{font-size:.85rem;color:#666;text-align:center}
 .card{background:#fff;border-radius:10px;padding:10px 14px;margin:14px 0;box-shadow:0 1px 3px #0002}
 .card h3{margin:.2em 0} .n{display:inline-block;background:#c0392b;color:#fff;border-radius:50%;width:1.6em;text-align:center;margin-right:.4em}
-.trio{display:flex;gap:6px;overflow-x:auto} .trio figure{margin:0;flex:0 0 auto} .trio img{height:200px;width:auto;max-width:none}
+.legend{font-size:.85rem;color:#555} .trio{display:flex;gap:6px;overflow-x:auto} .trio figure{margin:0;flex:0 0 auto} .trio img{height:200px;width:auto;max-width:none}
 .conf{font-size:.75rem;padding:2px 8px;border-radius:10px;margin-left:.5em;vertical-align:middle}
 .c強{color:#1e7b34} .c中{color:#b9770e} .c弱{color:#7f8c8d} span.c強{background:#e3f4e7} span.c中{background:#fdf2dc} span.c弱{background:#eceff0}
 """
@@ -25,6 +26,10 @@ figcaption{font-size:.85rem;color:#666;text-align:center}
 
 def b64(img, q=82):
     return base64.b64encode(cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])[1]).decode()
+
+
+def found(total, n):
+    return f"{total}個すべて検出" if n >= total else f"{total}個中{n}個を検出"
 
 
 def annotate(img, items, scale=0.5):
@@ -40,35 +45,37 @@ def annotate(img, items, scale=0.5):
 
 
 def card(i, it, L, R, heat):
+    """Crops of left, right (fine-aligned), red/cyan overlay and fine difference map."""
     x, y, w, h = it["box"]
     p = max(40, int(0.35 * max(w, h)))
     y0, y1, x0, x1 = max(0, y - p), min(L.shape[0], y + h + p), max(0, x - p), min(L.shape[1], x + w + p)
     s = 260 / (y1 - y0)
     a, b, hm = [cv2.resize(z[y0:y1, x0:x1], None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC) for z in (L, R, heat)]
+    ov = overlay(a, b)
     conf = html.escape(it["confidence"])
     figs = "".join(f'<figure><img src="data:image/jpeg;base64,{b64(z)}"><figcaption>{c}</figcaption></figure>'
-                   for z, c in ((a, "左"), (b, "右（位置合わせ後）"), (hm, "差分")))
+                   for z, c in ((a, "左"), (b, "右（位置合わせ後）"), (ov, "重ね合わせ"), (hm, "差分")))
     return (f'<div class="card"><h3><span class="n">{i}</span>{html.escape(it["where"])}'
             f' <span class="conf c{conf}">確度 {conf}</span></h3><p>{html.escape(it["what"])}</p><div class="trio">{figs}</div></div>')
 
 
 def render(pz: Puzzle):
     m, items = pz.meta, pz.items
-    L, R, heat = (cv2.imread(str(pz.work / f)) for f in ("L.png", "Rf.png", "heat.png"))
+    L, R, Rff, heat, heat_fine = (cv2.imread(str(pz.work / f))
+                                  for f in ("L.png", "Rf.png", "Rff.png", "heat.png", "heat_fine.png"))
     stats = json.loads((pz.work / "stats.json").read_text())
     title = html.escape(m["title"])
-    found = f"{m['total']}個中{len(items)}個を検出" if len(items) < m["total"] else f"{m['total']}個すべて検出"
     summary = "<br>".join(html.escape(s) for s in m.get("summary", "").strip().splitlines())
     rows = "".join(f"<tr><td>{i}</td><td>{html.escape(it['where'])}</td><td>{html.escape(it['what'])}</td>"
                    f"<td class='c{html.escape(it['confidence'])}'>{html.escape(it['confidence'])}</td></tr>"
                    for i, it in enumerate(items, 1))
-    cards = "".join(card(i, it, L, R, heat) for i, it in enumerate(items, 1))
+    cards = "".join(card(i, it, L, Rff, heat_fine) for i, it in enumerate(items, 1))
     doc = f'''<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} 画像処理レポート</title><style>{STYLE}</style><main>
 <p class="back"><a href="../">← 一覧へ</a></p>
 <h1>{title} 画像処理レポート</h1>
 <p>{html.escape(str(m.get("date", "")))} ・ {html.escape(m.get("place", ""))}</p>
-<div class="summary"><b>結果: {found}。</b><br>{summary}</div>
+<div class="summary"><b>結果: {found(m["total"], len(items))}。</b><br>{summary}</div>
 
 <h2>一覧</h2><table><tr><th>#</th><th>場所</th><th>違い</th><th>確度</th></tr>{rows}</table>
 
@@ -77,15 +84,18 @@ def render(pz: Puzzle):
 <figure><img src="data:image/jpeg;base64,{b64(annotate(R, items))}"><figcaption>右ページ（左に重なるよう変形済み）</figcaption></figure></div>
 <h2>差分マップ</h2><figure style="max-width:640px;margin:auto"><img src="data:image/jpeg;base64,{b64(cv2.resize(heat, None, fx=.5, fy=.5))}"><figcaption>明るいほど色の差が大きい（縁の帯はカードの端と照明の影響）</figcaption></figure>
 
-<h2>各差分の拡大</h2>{cards}
+<h2>各差分の拡大</h2>
+<p class="legend">重ね合わせ: 赤 = 左にだけある線、シアン = 右にだけある線、灰色 = 同じ。片側の色だけなら本物の追加・削除・伸縮、赤とシアンが線の両側に対で出るなら位置ずれ（または線の描き直し）。</p>{cards}
 
 <h2>手法</h2><ol>
 <li>写真から左右のページを切り出す</li>
 <li>SIFT 特徴点のマッチング（RANSAC で {stats["inliers"]:,} 点が一致）からホモグラフィを求め、右ページを左ページに重ねる</li>
 <li>カードのたわみを補正する: Farneback オプティカルフローを強くぼかした低周波成分だけで微修正（本物の差分まで消さないように）</li>
-<li>Lab 色空間で色差を計算。照明ムラは大きなスケールの平均を引いて補正し、±3px の近傍の最小値をとって残りのずれを吸収する</li>
-<li>閾値処理と連結成分で候補を抽出し、既知の箇所をマスクして閾値を下げて再探索する</li>
-<li>全候補を拡大して目視で判定する（ノイズ・汚れ・縁は除外）</li></ol>
+<li>Lab 色空間で色差を計算。照明ムラは大きなスケールの平均を引いて補正し、±3px の近傍の最小値をとって残りのずれを吸収する（粗い差分。上の差分マップ）</li>
+<li>細い線用に、ぼかし・ずれ許容を弱めた2回目の差分（σ1.2、±2px、局所的なフロー補正）も計算する</li>
+<li>細かい差分から候補を抽出し、差の総量ではなく周囲に対する突出度で並べる。面積の小さい細い線の違いも上位に来る</li>
+<li>候補ごとに明るさの差の符号を集計し、片側に偏るか（追加・削除・伸縮）、正負が対になるか（位置ずれ・描き直し）を数値化する</li>
+<li>全候補を左・右・重ね合わせで拡大して目視で判定する（ノイズ・汚れ・縁は除外）</li></ol>
 <p class="back"><a href="https://github.com/yubiquita/spot-diff">ソースコード</a></p>
 </main></html>'''
     out = DOCS / pz.slug

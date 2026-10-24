@@ -2,7 +2,7 @@
 import html
 
 from .puzzle import DOCS, all_puzzles
-from .report import STYLE
+from .report import STYLE, found
 
 GRID = """
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
@@ -19,7 +19,7 @@ def render():
             continue
         cards.append(f'<a href="{pz.slug}/"><img src="{pz.slug}/thumb.jpg" alt="" loading="lazy">'
                      f'<h3>{html.escape(m["title"])}</h3>'
-                     f'<p>{html.escape(str(m.get("date", "")))} ・ {m["total"]}個中{len(pz.items)}個を検出</p></a>')
+                     f'<p>{html.escape(str(m.get("date", "")))} ・ {found(m["total"], len(pz.items))}</p></a>')
     doc = f'''<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>間違い探しを画像処理で解く</title><style>{STYLE}{GRID}</style><main>
 <h1>間違い探しを画像処理で解く</h1>
