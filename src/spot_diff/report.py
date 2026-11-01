@@ -32,16 +32,20 @@ def found(total, n):
     return f"{total}個すべて検出" if n >= total else f"{total}個中{n}個を検出"
 
 
-def annotate(img, items, scale=0.5):
-    o = img.copy()
+def annotate(img, items, width=1100):
+    """Resize to `width` px first, then draw so marks look the same regardless of source resolution."""
+    s = width / img.shape[1]
+    o = cv2.resize(img, None, fx=s, fy=s, interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+    k = width / 1100
+    p, t, r = round(9 * k), max(1, round(3 * k)), round(17 * k)
     for i, it in enumerate(items, 1):
-        x, y, w, h = it["box"]
-        p = 18
-        cv2.rectangle(o, (x - p, y - p), (x + w + p, y + h + p), (0, 0, 255), 6)
-        cx, cy = max(x - p, 40), max(y - p, 40)
-        cv2.circle(o, (cx, cy), 34, (0, 0, 255), -1)
-        cv2.putText(o, str(i), (cx - 14 if i < 10 else cx - 26, cy + 15), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (255, 255, 255), 4)
-    return cv2.resize(o, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+        x, y, w, h = (round(v * s) for v in it["box"])
+        cv2.rectangle(o, (x - p, y - p), (x + w + p, y + h + p), (0, 0, 255), t)
+        cx, cy = max(x - p, r + 2), max(y - p, r + 2)
+        cv2.circle(o, (cx, cy), r, (0, 0, 255), -1)
+        cv2.putText(o, str(i), (cx - round((7 if i < 10 else 13) * k), cy + round(8 * k)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7 * k, (255, 255, 255), max(1, round(2 * k)))
+    return o
 
 
 def card(i, it, L, R, heat):
@@ -82,7 +86,7 @@ def render(pz: Puzzle):
 <h2>全体図（赤枠 = 検出箇所）</h2>
 <div class="pair"><figure><img src="data:image/jpeg;base64,{b64(annotate(L, items))}"><figcaption>左ページ</figcaption></figure>
 <figure><img src="data:image/jpeg;base64,{b64(annotate(R, items))}"><figcaption>右ページ（左に重なるよう変形済み）</figcaption></figure></div>
-<h2>差分マップ</h2><figure style="max-width:640px;margin:auto"><img src="data:image/jpeg;base64,{b64(cv2.resize(heat, None, fx=.5, fy=.5))}"><figcaption>明るいほど色の差が大きい（縁の帯はカードの端と照明の影響）</figcaption></figure>
+<h2>差分マップ</h2><figure style="max-width:640px;margin:auto"><img src="data:image/jpeg;base64,{b64(cv2.resize(heat, None, fx=640 / heat.shape[1], fy=640 / heat.shape[1]))}"><figcaption>明るいほど色の差が大きい（縁の帯はカードの端と照明の影響）</figcaption></figure>
 
 <h2>各差分の拡大</h2>
 <p class="legend">重ね合わせ: 赤 = 左にだけある線、シアン = 右にだけある線、灰色 = 同じ。片側の色だけなら本物の追加・削除・伸縮、赤とシアンが線の両側に対で出るなら位置ずれ（または線の描き直し）。</p>{cards}
@@ -101,6 +105,6 @@ def render(pz: Puzzle):
     out = DOCS / pz.slug
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(doc)
-    thumb = annotate(L, items, scale=360 / L.shape[1])
+    thumb = annotate(L, items, width=360)
     cv2.imwrite(str(out / "thumb.jpg"), thumb, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return out / "index.html"
